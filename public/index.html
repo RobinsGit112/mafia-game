@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en-NZ" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#090d16" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Mafia — Automated Vocal Announcer</title>
+
+  <!-- Tailwind CSS via CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Lightweight QR Code Generator (qrcode.min.js) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" defer></script>
+
+  <!-- Socket.io Client Library (Served automatically by server.js) -->
+  <script src="/socket.io/socket.io.js" defer></script>
+
+  <!-- Application Logic (Part 2) -->
+  <script src="/app.js" defer></script>
+
+  <style>
+    /* Phase-driven atmospheric background transitions */
+    body {
+      background-color: #090d16;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      transition: background-color 0.6s ease, color 0.4s ease;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body[data-phase="LOBBY"] {
+      background: radial-gradient(circle at top, #1e293b 0%, #090d16 70%);
+    }
+
+    body[data-phase="NIGHT_PHASE"] {
+      background: radial-gradient(circle at top, #17153b 0%, #05070e 75%);
+    }
+
+    body[data-phase="DAY_PHASE"] {
+      background: radial-gradient(circle at top, #1e3a5f 0%, #0f172a 75%);
+    }
+
+    body[data-phase="GAME_OVER"] {
+      background: radial-gradient(circle at top, #3b1829 0%, #090d16 75%);
+    }
+
+    /* Status Badges */
+    #connection-status[data-status="online"] {
+      background-color: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border-color: rgba(16, 185, 129, 0.35);
+    }
+    #connection-status[data-status="offline"] {
+      background-color: rgba(239, 68, 68, 0.2);
+      color: #f87171;
+      border-color: rgba(239, 68, 68, 0.4);
+    }
+
+    #audio-status-badge[data-unlocked="true"],
+    #wakelock-status-badge[data-active="true"] {
+      background-color: rgba(56, 189, 248, 0.15);
+      color: #38bdf8;
+      border-color: rgba(56, 189, 248, 0.35);
+    }
+
+    /* Urgent Timer Pulse (<= 10 seconds) */
+    #timer-display[data-urgent="true"] {
+      color: #f87171;
+      animation: pulse-urgent 0.8s infinite alternate;
+    }
+
+    @keyframes pulse-urgent {
+      from { transform: scale(1); opacity: 1; }
+      to { transform: scale(1.06); opacity: 0.75; }
+    }
+
+    /* Dynamic Lobby Slots populated by app.js */
+    .lobby-slot {
+      padding: 0.75rem 1rem;
+      border-radius: 0.75rem;
+      font-size: 0.925rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      transition: all 0.2s ease;
+    }
+    .lobby-slot.filled {
+      background-color: rgba(30, 41, 59, 0.85);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      color: #f1f5f9;
+      font-weight: 600;
+    }
+    .lobby-slot.empty {
+      background-color: rgba(15, 23, 42, 0.5);
+      border: 1px dashed rgba(148, 163, 184, 0.25);
+      color: #64748b;
+    }
+
+    /* Host Start Button Ready State */
+    #start-game-btn[data-ready="true"] {
+      background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+      border-color: #34d399;
+    }
+
+    /* Dynamic Role Badge Colours */
+    #private-role-badge[data-role="MAFIA"] {
+      background-color: rgba(239, 68, 68, 0.2);
+      color: #fca5a5;
+      border: 1px solid rgba(239, 68, 68, 0.5);
+    }
+    #private-role-badge[data-role="DOCTOR"] {
+      background-color: rgba(16, 185, 129, 0.2);
+      color: #6ee7b7;
+      border: 1px solid rgba(16, 185, 129, 0.5);
+    }
+    #private-role-badge[data-role="COP"] {
+      background-color: rgba(59, 130, 246, 0.2);
+      color: #93c5fd;
+      border: 1px solid rgba(59, 130, 246, 0.5);
+    }
+    #private-role-badge[data-role="CIVILIAN"] {
+      background-color: rgba(148, 163, 184, 0.2);
+      color: #cbd5e1;
+      border: 1px solid rgba(148, 163, 184, 0.4);
+    }
+
+    /* Dynamic Public Roster Pills */
+    .roster-pill {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.65rem 0.9rem;
+      border-radius: 0.75rem;
+      font-size: 0.875rem;
+      transition: all 0.2s ease;
+    }
+    .roster-pill.alive {
+      background-color: rgba(30, 41, 59, 0.75);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      color: #f8fafc;
+    }
+    .roster-pill.eliminated {
+      background-color: rgba(15, 23, 42, 0.45);
+      border: 1px solid rgba(239, 68, 68, 0.2);
+      color: #64748b;
+      text-decoration: line-through;
+      opacity: 0.65;
+    }
+    .roster-name {
+      font-weight: 600;
+    }
+    .roster-meta {
+      font-size: 0.75rem;
+      padding: 0.15rem 0.55rem;
+      border-radius: 9999px;
+      background-color: rgba(15, 23, 42, 0.7);
+      color: #94a3b8;
+      text-decoration: none;
+    }
+
+    /* Dynamic Night/Day Target Action Buttons */
+    .target-action-btn {
+      width: 100%;
+      padding: 0.95rem 1.1rem;
+      border-radius: 0.875rem;
+      background-color: rgba(30, 41, 59, 0.9);
+      border: 1px solid rgba(148, 163, 184, 0.3);
+      color: #f8fafc;
+      font-weight: 600;
+      font-size: 1rem;
+      text-align: left;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      transition: transform 0.1s ease, background-color 0.2s ease, border-color 0.2s ease;
+    }
+    .target-action-btn:active {
+      transform: scale(0.98);
+    }
+    .target-action-btn.selected {
+      background: linear-gradient(135deg, rgba(245, 158, 11, 0.25) 0%, rgba(217, 119, 6, 0.35) 100%);
+      border-color: #f59e0b;
+      color: #fde68a;
+      box-shadow: 0 0 15px rgba(245, 158, 11, 0.2);
+    }
+
+    /* Cop Investigation Log Rows */
+    .investigation-item {
+      padding: 0.5rem 0.75rem;
+      border-radius: 0.5rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      margin-top: 0.35rem;
+    }
+    .investigation-item.is-mafia {
+      background-color: rgba(239, 68, 68, 0.2);
+      border: 1px solid rgba(239, 68, 68, 0.45);
+      color: #fca5a5;
+    }
+    .investigation-item.is-clear {
+      background-color: rgba(16, 185, 129, 0.2);
+      border: 1px solid rgba(16, 185, 129, 0.45);
+      color: #6ee7b7;
+    }
+
+    /* Game Over Summary Rows */
+    .gameover-player-row {
+      padding: 0.8rem 1rem;
+      border-radius: 0.75rem;
+      font-weight: 600;
+      font-size: 0.925rem;
+      display: flex;
+      justify-content: space-between;
+    }
+    .gameover-player-row.survived {
+      background-color: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      color: #ecfdf5;
+    }
+    .gameover-player-row.fallen {
+      background-color: rgba(30, 41, 59, 0.6);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      color: #94a3b8;
+    }
+
+    /* Mobile Toast Alerts */
+    .toast-message {
+      padding: 0.75rem 1rem;
+      border-radius: 0.75rem;
+      font-size: 0.875rem;
+      font-weight: 600;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.6);
+      transition: opacity 0.3s ease, transform 0.3s ease;
+      backdrop-filter: blur(8px);
+    }
+    .toast-info {
+      background-color: rgba(30, 41, 59, 0.95);
+      border: 1px solid #38bdf8;
+      color: #e0f2fe;
+    }
+    .toast-success {
+      background-color: rgba(6, 78, 59, 0.95);
+      border: 1px solid #34d399;
+      color: #d1fae5;
+    }
+    .toast-warning {
+      background-color: rgba(120, 53, 15, 0.95);
+      border: 1px solid #fbbf24;
+      color: #fef3c7;
+    }
+    .toast-danger {
+      background-color: rgba(127, 29, 29, 0.95);
+      border: 1px solid #f87171;
+      color: #fee2e2;
+    }
+    .toast-message.fade-out {
+      opacity: 0;
+      transform: translateY(-8px);
+    }
+  </style>
+</head>
+
+<body data-phase="LOBBY" class="min-h-full flex flex-col selection:bg-indigo-500 selection:text-white">
+
+  <!-- Non-Blocking Toast Notification Container -->
+  <div id="toast-container" class="fixed top-3 inset-x-4 z-50 flex flex-col gap-2 pointer-events-none max-w-md mx-auto"></div>
+
+  <!-- App Container (Mobile-First Single Column, Expands Cleanly for Host Tablet/Desktop) -->
+  <main class="w-full max-w-md mx-auto px-4 pt-3 pb-10 flex-1 flex flex-col gap-4">
+
+    <!-- ====================================================================
+         PERSISTENT HEADER: CONNECTION, DEVICE BADGES, PHASE & SERVER TIMER
+         ==================================================================== -->
+    <header class="bg-slate-900/80 backdrop-blur-md border border-slate-800 rounded-2xl p-4 shadow-lg">
+      <!-- Top Telemetry Row -->
+      <div class="flex flex-wrap items-center justify-between gap-1.5 text-[11px] font-semibold tracking-wide uppercase mb-3">
+        <span id="connection-status" data-status="offline" class="px-2.5 py-0.5 rounded-full border border-slate-700 bg-slate-800 text-slate-400">
+          Connecting...
+        </span>
+        <div class="flex items-center gap-1.5">
+          <span id="audio-status-badge" data-unlocked="false" class="px-2.5 py-0.5 rounded-full border border-slate-700 bg-slate-800 text-slate-400">
+            Audio Muted
+          </span>
+          <span id="wakelock-status-badge" data-active="false" class="px-2.5 py-0.5 rounded-full border border-slate-700 bg-slate-800 text-slate-400">
+            Lock: Standard
+          </span>
+        </div>
+      </div>
+
+      <!-- Phase Title & Large Authoritative Timer -->
+      <div class="flex items-baseline justify-between gap-2">
+        <div>
+          <p class="text-[11px] uppercase tracking-widest text-indigo-400 font-bold">Current Stage</p>
+          <h1 id="phase-title" class="text-xl font-extrabold text-white tracking-tight">
+            Lobby (0/5 Players)
+          </h1>
+        </div>
+        <div id="timer-display" data-urgent="false" class="text-3xl font-mono font-black text-amber-400 tabular-nums">
+          0:00
+        </div>
+      </div>
+
+      <!-- Server-Synchronised Countdown Bar -->
+      <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden mt-3">
+        <div id="timer-progress-bar" class="h-full bg-gradient-to-r from-indigo-500 via-sky-400 to-emerald-400 transition-all duration-500" style="width: 100%;"></div>
+      </div>
+
+      <!-- Live Vocal Announcer Transcript Banner -->
+      <div class="mt-3 pt-3 border-t border-slate-800/80 flex items-start gap-2.5">
+        <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-300 text-xs shrink-0 mt-0.5">
+          🔊
+        </span>
+        <p id="announcer-log" class="text-xs text-slate-300 leading-relaxed italic">
+          Waiting for 5 players to join the lobby.
+        </p>
+      </div>
+    </header>
+
+    <!-- ====================================================================
+         VIEW 1: LOBBY VIEW (JOIN FORM, CONNECTED ROSTER, HOST QR & AUDIO UNLOCK)
+         ==================================================================== -->
+    <section id="lobby-view" class="flex flex-col gap-4">
+
+      <!-- Player Join Card (Automatically hidden by app.js once joined) -->
+      <form id="join-form" class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-lg flex flex-col gap-3">
+        <div>
+          <h2 class="text-base font-bold text-white">Join the Table</h2>
+          <p class="text-xs text-slate-400">Enter your alias. The game launches into Night 1 automatically once 5 players connect.</p>
+        </div>
+
+        <div>
+          <label for="player-name-input" class="sr-only">Player Name</label>
+          <input
+            id="player-name-input"
+            type="text"
+            maxlength="18"
+            required
+            autocomplete="nickname"
+            placeholder="Your Name (e.g., Alex)"
+            class="w-full px-3.5 py-3 rounded-xl bg-slate-950 border border-slate-700 text-white placeholder-slate-500 text-base font-medium focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+          />
+        </div>
+
+        <label class="flex items-center gap-3 p-2.5 rounded-xl bg-slate-950/60 border border-slate-800/80 cursor-pointer select-none">
+          <input
+            id="host-mode-checkbox"
+            type="checkbox"
+            class="w-4 h-4 rounded text-indigo-600 bg-slate-900 border-slate-700 focus:ring-indigo-500"
+          />
+          <span class="text-xs text-slate-300 leading-snug">
+            <strong class="text-white block">Act as Table Host Device</strong>
+            Plays vocal announcements aloud &amp; keeps screen awake.
+          </span>
+        </label>
+
+        <button
+          type="submit"
+          class="w-full py-3.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:scale-[0.99] text-white font-bold text-sm tracking-wide shadow-md shadow-indigo-950/50 transition"
+        >
+          Join 5-Player Lobby
+        </button>
+      </form>
+
+      <!-- Host Audio & Wake-Lock Authoriser (Satisfies iOS Safari Gesture Requirement) -->
+      <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-lg flex flex-col gap-3">
+        <div class="flex items-center justify-between">
+          <h2 class="text-sm font-bold text-white uppercase tracking-wider">Host Speaker &amp; Wake Lock</h2>
+          <span class="text-[11px] text-amber-400 font-semibold">iOS / Safari Ready</span>
+        </div>
+        <p class="text-xs text-slate-400 leading-relaxed">
+          Place one phone in the centre of the room or hold it as Host. Tap below to authorise the automated Vocal Announcer and prevent the screen from dimming.
+        </p>
+        <button
+          id="start-game-btn"
+          type="button"
+          data-ready="false"
+          class="w-full py-3.5 px-4 rounded-xl bg-amber-600 hover:bg-amber-500 active:scale-[0.99] border border-amber-400/40 text-white font-bold text-sm tracking-wide shadow-md transition"
+        >
+          Start Game / Enable Host Vocal Announcer
+        </button>
+      </div>
+
+      <!-- Connected Players Roster (5 Slots) -->
+      <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-lg flex flex-col gap-3">
+        <div class="flex items-center justify-between">
+          <h2 class="text-sm font-bold text-white uppercase tracking-wider">Lobby Roster</h2>
+          <span id="lobby-player-count" class="text-xs font-semibold text-indigo-400">0 / 5 Players Joined</span>
+        </div>
+        <ul id="lobby-player-list" class="flex flex-col gap-2">
+          <!-- Populated dynamically by app.js -->
+        </ul>
+      </div>
+
+      <!-- Scannable Room QR Code Dashboard -->
+      <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-lg flex flex-col items-center text-center gap-3">
+        <div>
+          <h2 class="text-sm font-bold text-white uppercase tracking-wider">Scan to Join Table</h2>
+          <p class="text-xs text-slate-400 mt-0.5">Point player cameras at the QR code to join immediately</p>
+        </div>
+
+        <div
+          id="qr-code-container"
+          class="p-3 bg-white rounded-2xl shadow-inner flex items-center justify-center min-w-[192px] min-h-[192px]"
+        ></div>
+
+        <p id="join-url-label" class="text-[11px] font-mono text-slate-400 break-all bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800 w-full">
+          Loading room link...
+        </p>
+      </div>
+    </section>
+
+    <!-- ====================================================================
+         VIEW 2: ACTIVE GAME VIEW (SECRET ROLE CARD, NIGHT/DAY ACTIONS, ROSTER)
+         ==================================================================== -->
+    <section id="game-view" hidden class="flex flex-col gap-4">
+
+      <!-- Secret Role Card with Tap-to-Conceal Privacy Toggle -->
+      <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-lg">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs font-bold uppercase tracking-wider text-slate-400">Secret Identity</span>
+          <button
+            type="button"
+            onclick="const body = document.getElementById('role-secret-body'); const hint = document.getElementById('role-privacy-hint'); body.classList.toggle('blur-md'); body.classList.toggle('select-none'); hint.textContent = body.classList.contains('blur-md') ? 'Tap to Reveal Role' : 'Tap to Blur Screen';"
+            class="text-[11px] font-semibold text-indigo-400 hover:text-indigo-300 bg-indigo-950/60 border border-indigo-800/50 px-2.5 py-1 rounded-lg"
+          >
+            <span id="role-privacy-hint">Tap to Blur Screen</span>
+          </button>
+        </div>
+
+        <div id="role-secret-body" class="transition-all duration-200">
+          <div class="flex items-center gap-2.5 mt-1">
+            <span
+              id="private-role-badge"
+              data-role="NONE"
+              class="px-3 py-1 rounded-lg text-sm font-black tracking-wider uppercase"
+            >
+              ASSIGNING...
+            </span>
+          </div>
+          <p id="private-role-description" class="text-xs text-slate-300 mt-2.5 leading-relaxed">
+            Waiting for role assignment...
+          </p>
+
+          <!-- Private Cop Investigation History Log -->
+          <div id="cop-investigation-log" hidden class="mt-3 pt-3 border-t border-slate-800"></div>
+        </div>
+      </div>
+
+      <!-- Civilian Night Acoustic Masking Panel ("Tells" Fix) -->
+      <div
+        id="civilian-decoy-panel"
+        hidden
+        class="bg-indigo-950/40 border border-indigo-500/30 rounded-2xl p-4 shadow-lg flex flex-col gap-3"
+      >
+        <div class="flex items-center justify-between">
+          <h2 class="text-sm font-bold text-indigo-200 uppercase tracking-wider">Night Acoustic Cover</h2>
+          <span class="text-[11px] font-semibold px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300">Civilian Decoy</span>
+        </div>
+        <p id="decoy-status-text" class="text-xs text-indigo-200/80 leading-relaxed">
+          Tap periodically so players in the room cannot deduce roles from screen tap sounds.
+        </p>
+        <button
+          id="keep-sleeping-btn"
+          type="button"
+          class="w-full py-4 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 active:scale-[0.98] text-white font-bold text-sm tracking-wide shadow-md transition"
+        >
+          Tap to Keep Sleeping
+        </button>
+      </div>
+
+      <!-- Dynamic Action / Voting Target Selector -->
+      <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-lg flex flex-col gap-3">
+        <h2 id="action-prompt-label" class="text-sm font-bold text-amber-300">
+          Await instructions...
+        </h2>
+        <div id="action-target-list" class="flex flex-col gap-2.5">
+          <!-- Target buttons dynamically injected by app.js -->
+        </div>
+      </div>
+
+      <!-- Living & Eliminated Town Roster -->
+      <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-lg flex flex-col gap-3">
+        <div class="flex items-center justify-between">
+          <h2 class="text-sm font-bold text-white uppercase tracking-wider">Town Status</h2>
+          <span class="text-[11px] text-slate-400">Live Vote &amp; Survival Count</span>
+        </div>
+        <div id="public-roster-list" class="flex flex-col gap-2">
+          <!-- Roster pills dynamically injected by app.js -->
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ====================================================================
+         VIEW 3: GAME OVER VIEW (WINNER BANNER, FULL ROLE REVEAL & REMATCH)
+         ==================================================================== -->
+    <section id="gameover-view" hidden class="flex flex-col gap-4">
+      <div class="bg-slate-900/95 border border-slate-800 rounded-2xl p-5 shadow-xl text-center flex flex-col gap-4">
+        <div>
+          <p class="text-xs font-bold uppercase tracking-widest text-amber-400">Match Concluded</p>
+          <h2 id="gameover-winner-banner" class="text-2xl font-black text-white mt-1">
+            Game Over
+          </h2>
+        </div>
+
+        <div class="text-left">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Full Role Reveal</h3>
+          <ul id="gameover-roster-list" class="flex flex-col gap-2">
+            <!-- Final revealed player roles injected by app.js -->
+          </ul>
+        </div>
+
+        <button
+          id="reset-game-btn"
+          type="button"
+          class="w-full py-3.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-[0.99] text-white font-bold text-sm tracking-wide shadow-md transition mt-2"
+        >
+          Play Another Match (Return to Lobby)
+        </button>
+      </div>
+    </section>
+
+  </main>
+</body>
+</html>
